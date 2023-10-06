@@ -18,6 +18,34 @@ function error($msg = NULL) {
     exit;
 }
 
+function execute_query($target) {
+    $table = $target['target'];
+    $filters = $target['payload']['filters'] ?? [];
+    $column_names = $target['payload']['columns'] ?? [];
+
+    $query = "GET $table\nOutputFormat: json\n";
+    foreach($filters as $filter)
+	$query .= "Filter: $filter\n";
+    if(!empty($column_names))
+	$query .= "Columns: " . implode($column_names, ' ') . "\n";
+    $query .= "\n";
+    $lq = open_livestatus_socket();
+    fwrite($lq, $query);
+    $buf = "";
+    while(!feof($lq))
+	$buf .= fgets($lq);
+    $rows = json_decode($buf, TRUE);
+    unset($buf);
+    if (count($rows) == 0)
+	return;
+    $columns = [];
+    if(empty($column_names))
+	$column_names = array_shift($rows);
+    foreach(array_combine($column_names, $rows[0]) as $column_name => $item)
+	$columns[] = ['text' => $column_name, 'type' => is_int($item)? 'number' : 'string'];
+    return ['columns' => $columns, 'rows' => $rows, 'type' => 'table'];
+}
+
 switch ($relative_uri) {
     case '/':
         if ($_SERVER['REQUEST_METHOD'] != 'GET') {
@@ -32,35 +60,9 @@ switch ($relative_uri) {
             exit;
         }
         $body = file_get_contents('php://input');
-        file_put_contents('/tmp/foo.json', $body);
         $body = json_decode($body, TRUE);
 
-        $results = [];
-        foreach($body['targets'] as $target) {
-            $table = $target['target'];
-            $filters = $target['payload']['filters'] ?? [];
-            $column_names = $target['payload']['columns'] ?? [];
-
-            $query = "GET $table\nOutputFormat: json\n";
-            foreach($filters as $filter)
-                $query .= "Filter: $filter\n";
-            if(!empty($column_names))
-                $query .= "Columns: " . implode($column_names, ' ') . "\n";
-            $query .= "\n";
-            $lq = open_livestatus_socket();
-            fwrite($lq, $query);
-            $buf = "";
-            while(!feof($lq))
-                $buf .= fgets($lq);
-            $rows = json_decode($buf, TRUE);
-            unset($buf);
-            $columns = [];
-            if(empty($column_names))
-                $column_names = array_shift($rows);
-            foreach(array_combine($column_names, $rows[0]) as $column_name => $item)
-                $columns[] = ['text' => $column_name, 'type' => is_int($item)? 'number' : 'string'];
-            $results[] = ['columns' => $columns, 'rows' => $rows, 'type' => 'table'];
-        }
+	$results = array_filter(array_map("execute_query", $body['targets']));
 
         header('Content-Type: application/json');
         echo json_encode($results);
@@ -85,6 +87,24 @@ switch ($relative_uri) {
 
         header('Content-Type: application/json');
         echo json_encode($tables);
+        break;
+    case '/variable':
+        if ($_SERVER['REQUEST_METHOD'] != 'POST') {
+            header('HTTP/1.1 405 Method Not Allowed');
+            exit;
+        }
+
+        $body = file_get_contents('php://input');
+        $body = json_decode($body, TRUE);
+	$payload = $body["payload"];
+        if (empty($body["payload"])) {
+            header('HTTP/1.1 400 Bad Request');
+            exit;
+        }
+	$result = execute_query($payload);
+
+        header('Content-Type: application/json');
+        echo json_encode(array_map(function($value) { return array("__text" => $value, "__value" => $value); }, $result["rows"]));
         break;
     default:
         header('HTTP/1.1 404 Not Found');
