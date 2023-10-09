@@ -19,15 +19,15 @@ function error($msg = NULL) {
 }
 
 function execute_query($target) {
-    $table = $target['target'];
+    $table = filter_var($target['target'], FILTER_SANITIZE_URL);
     $filters = $target['payload']['filters'] ?? [];
     $column_names = $target['payload']['columns'] ?? [];
 
     $query = "GET $table\nOutputFormat: json\n";
     foreach($filters as $filter)
-	$query .= "Filter: $filter\n";
+	$query .= "Filter: " . filter_var($filter, FILTER_UNSAFE_RAW, FILTER_FLAG_STRIP_LOW | FILTER_FLAG_STRIP_HIGH) . "\n";
     if(!empty($column_names))
-	$query .= "Columns: " . implode($column_names, ' ') . "\n";
+	$query .= "Columns: " . filter_var(implode($column_names, ' '), FILTER_UNSAFE_RAW, FILTER_FLAG_STRIP_LOW | FILTER_FLAG_STRIP_HIGH) . "\n";
     $query .= "\n";
     $lq = open_livestatus_socket();
     fwrite($lq, $query);
